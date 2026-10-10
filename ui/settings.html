@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>喝水进度条 WaterBar</title>
+  <link rel="stylesheet" href="settings.css" />
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" style="stop-color: var(--c0)" />
+        <stop offset="0.55" style="stop-color: var(--c1)" />
+        <stop offset="1" style="stop-color: var(--c2)" />
+      </linearGradient>
+      <linearGradient id="cupWater" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" style="stop-color: var(--glow)" />
+        <stop offset="1" style="stop-color: var(--c2)" />
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <div class="shell">
+    <div class="atmos" aria-hidden="true">
+      <i class="blob b1"></i><i class="blob b2"></i><i class="blob b3"></i>
+    </div>
+
+    <header class="titlebar" data-tauri-drag-region>
+      <div class="brand" data-tauri-drag-region>
+        <svg class="logo" viewBox="0 0 24 24"><path d="M12 2.4c2.5 3.7 7.2 8.3 7.2 12.6a7.2 7.2 0 0 1-14.4 0c0-4.3 4.7-8.9 7.2-12.6z" /></svg>
+        <span class="name" data-tauri-drag-region>WaterBar</span>
+        <span class="sub" data-tauri-drag-region>喝水进度条</span>
+      </div>
+      <div class="winbtns">
+        <button id="btnMin" title="最小化"><svg viewBox="0 0 12 12"><path d="M2 6h8" /></svg></button>
+        <button id="btnClose" class="close" title="收起到托盘"><svg viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" /></svg></button>
+      </div>
+    </header>
+
+    <main>
+      <section class="left">
+        <div class="orb reveal" style="--d: 0">
+          <canvas id="orb"></canvas>
+          <div class="orb-info" id="orbInfo">
+            <div class="orb-cap" id="orbCap">距离下次喝水</div>
+            <div class="orb-clock" id="orbClock">--:--</div>
+            <div class="orb-pct" id="orbPct">0%</div>
+          </div>
+        </div>
+
+        <div class="cups reveal" style="--d: 1">
+          <div class="cups-row" id="cupsRow"></div>
+          <div class="cups-text">今日已喝 <b id="cupsN">0</b> <span>/ 8 杯</span> <em id="cupsMore"></em></div>
+        </div>
+
+        <div class="actions reveal" style="--d: 2">
+          <button class="btn primary" id="btnDrink">
+            <svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7" /></svg>我喝完了
+          </button>
+          <button class="btn" id="btnPause">暂停</button>
+          <button class="btn" id="btnTest">预览提醒</button>
+        </div>
+      </section>
+
+      <section class="right">
+        <div class="card preview reveal" style="--d: 1">
+          <div class="mock">
+            <div class="mock-icons">
+              <i class="ic start"><b></b><b></b><b></b><b></b></i>
+              <i class="ic search"><s></s>搜索</i>
+              <i class="ic app a1"></i><i class="ic app a2 active"></i><i class="ic app a3"></i><i class="ic app a4"></i><i class="ic app a5"></i>
+            </div>
+            <div class="mock-tray"><span class="caret">⌃</span><span>中</span><span class="clock"><b id="mockTime">00:00</b><small id="mockDate">2026/1/1</small></span></div>
+            <canvas id="preview"></canvas>
+          </div>
+          <div class="cap"><i class="live"></i>实时预览 · 你的任务栏会变成这样</div>
+        </div>
+
+        <div class="field reveal" style="--d: 2">
+          <div class="label"><em>INTERVAL</em>提醒间隔</div>
+          <div class="interval">
+            <div class="big"><span id="ivNum">45</span><small>分钟</small></div>
+            <div class="chips" id="chips"></div>
+          </div>
+          <input type="range" id="ivRange" min="1" max="180" step="1" />
+        </div>
+
+        <div class="row2 reveal" style="--d: 3">
+          <div class="field">
+            <div class="label"><em>STYLE</em>任务栏样式</div>
+            <div class="seg" id="seg">
+              <i class="seg-thumb"></i>
+              <button data-mode="fill"><svg viewBox="0 0 24 24"><path d="M2 13c3-3 5 3 8 0s5 3 8 0 3-1 4 0v7H2z" /></svg>液态填充</button>
+              <button data-mode="line"><svg viewBox="0 0 24 24"><path d="M2 8h14" /><circle cx="19" cy="8" r="2.4" /></svg>流光细线</button>
+            </div>
+          </div>
+          <div class="field">
+            <div class="label"><em>DENSITY</em>水体浓度<b id="opVal">70%</b></div>
+            <input type="range" id="opRange" min="15" max="100" step="1" />
+          </div>
+        </div>
+
+        <div class="field reveal" style="--d: 4">
+          <div class="label"><em>THEME</em>主题配色</div>
+          <div class="themes" id="themes"></div>
+        </div>
+
+        <div class="row2 reveal" style="--d: 5">
+          <div class="field">
+            <div class="label"><em>MESSAGE</em>提醒文字</div>
+            <input class="text" id="msg" maxlength="16" placeholder="该喝水啦" spellcheck="false" />
+          </div>
+          <div class="field">
+            <div class="label"><em>OPTIONS</em>选项</div>
+            <div class="toggles">
+              <label class="tog"><input type="checkbox" id="tTime" /><i></i>倒计时</label>
+              <label class="tog"><input type="checkbox" id="tSound" /><i></i>提示音</label>
+              <label class="tog"><input type="checkbox" id="tAuto" /><i></i>开机自启</label>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="settings.js"></script>
+</body>
+</html>

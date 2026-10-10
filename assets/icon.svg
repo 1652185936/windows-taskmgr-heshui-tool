@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="body" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#8AF6FF"/>
+      <stop offset="0.5" stop-color="#2FA8FF"/>
+      <stop offset="1" stop-color="#4E54FF"/>
+    </linearGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.15"/>
+    </linearGradient>
+    <clipPath id="drop">
+      <path d="M512 70 C 585 210 820 410 820 650 A 308 308 0 1 1 204 650 C 204 410 439 210 512 70 Z"/>
+    </clipPath>
+  </defs>
+  <path d="M512 70 C 585 210 820 410 820 650 A 308 308 0 1 1 204 650 C 204 410 439 210 512 70 Z" fill="url(#body)"/>
+  <g clip-path="url(#drop)">
+    <path d="M150 600 C 260 540 360 660 470 600 C 580 540 680 660 790 600 C 840 575 880 580 900 590 L 900 1000 L 150 1000 Z" fill="url(#water)"/>
+    <path d="M150 680 C 260 620 360 740 470 680 C 580 620 680 740 790 680 L 900 680 L 900 1000 L 150 1000 Z" fill="#FFFFFF" fill-opacity="0.18"/>
+  </g>
+  <path d="M330 640 C 330 520 380 430 440 360" stroke="#FFFFFF" stroke-opacity="0.85" stroke-width="44" stroke-linecap="round" fill="none"/>
+  <circle cx="318" cy="730" r="26" fill="#FFFFFF" fill-opacity="0.85"/>
+</svg>

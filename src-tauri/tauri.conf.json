@@ -1,0 +1,61 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "WaterBar",
+  "mainBinaryName": "WaterBar",
+  "version": "1.0.0",
+  "identifier": "com.waterbar.app",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "overlay",
+        "url": "overlay.html",
+        "title": "WaterBar Overlay",
+        "width": 800,
+        "height": 48,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "shadow": false,
+        "focus": false,
+        "focusable": false,
+        "visible": false,
+        "dragDropEnabled": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --disable-gpu"
+      },
+      {
+        "label": "settings",
+        "create": false,
+        "url": "settings.html",
+        "title": "喝水进度条 WaterBar",
+        "width": 940,
+        "height": 640,
+        "resizable": false,
+        "maximizable": false,
+        "decorations": false,
+        "transparent": false,
+        "backgroundColor": "#090F1E",
+        "shadow": true,
+        "center": true,
+        "focus": true,
+        "theme": "Dark",
+        "dragDropEnabled": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --disable-gpu"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"]
+  }
+}
