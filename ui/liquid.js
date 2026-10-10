@@ -27,6 +27,7 @@ const LAYERS = [
   { lambda: 170, speed: 34, dy: 0 },
   { lambda: 245, speed: -23, dy: -1.6 },
 ];
+const Q = 0.5; // the two water layers render at half resolution (soft anyway; ~4× less work per frame)
 const rgbCache = new Map(); // hex colour → [r, g, b]
 
 /**
@@ -197,6 +198,7 @@ export class LiquidBar {
     this.acc = { bubble: 0, spark: 0, ring: 0 }; // fractional spawn accumulators
     this.kit = null; // per theme/size sprites, rebuilt by prepare()
     this.badgeKit = null; // reminder badge sprites, rebuilt when the text changes
+    this.labelSprite = null; // countdown label sprite, rebuilt when its text changes
     new ResizeObserver(() => this.resize()).observe(canvas);
     this.resize();
   }
@@ -315,8 +317,9 @@ export class LiquidBar {
     const draining = this.drainAge >= 0; // drink animation running
     const dk = draining ? clamp(this.drainAge / DRAIN, 0, 1) : 0; // drain progress
     const line = o.mode === 'line' || o.compact; // thin light-line style
+    const ambient = !line && o.mode === 'ambient'; // "通透背景": a faint tint, like the taskbar's own background
     const p = draining ? this.pHold : lerp(this.p, 1, re); // drawn liquid progress
-    const base = line ? 0.94 * (draining ? this.drainRe : re) : lerp(0.8, 0.94, re); // liquid height fraction
+    const base = line ? 0.94 * (draining ? this.drainRe : re) : lerp(ambient ? 0.9 : 0.8, 0.94, re); // liquid height fraction
     const level = base * (1 - dk * dk * dk); // drinking lowers the water
     const surge = this.remind ? 3.4 * Math.exp(-this.remindAge * 2.2) : 0; // splash right after the reminder fires
     const amp = unit * (1.4 + 2 * re + surge + 3 * Math.sin(dk * Math.PI)); // wave height
@@ -326,7 +329,7 @@ export class LiquidBar {
     const T = o.compact ? S : Math.max(2, Math.round(S * 0.075)); // light line thickness
     const lineP = draining ? lerp(this.pHold, this.target, easeInOut(dk)) : this.p; // light line progress
     return {
-      vertical, L, S, unit, re, dk, draining, line, p, level, amp, full, end, atBottom, T,
+      vertical, L, S, unit, re, dk, draining, line, ambient, p, level, amp, full, end, atBottom, T,
       front: p * L, // front without the wobble: used for on/off decisions so they don't flicker
       top: S * (1 - level),
       y0: atBottom ? S - T : 0,
@@ -356,7 +359,7 @@ export class LiquidBar {
     }
 
     const wet = g.level > 0.01 && g.front > 2; // there is liquid to fill
-    this.acc.bubble += wet ? dt * (g.p * 7 + g.re * 16 + (g.draining ? 46 : 0)) : 0;
+    this.acc.bubble += wet ? dt * (g.p * (g.ambient ? 3 : 7) + g.re * 16 + (g.draining ? 46 : 0)) : 0;
     while (this.acc.bubble >= 1 && this.bubbles.length < 90) {
       this.acc.bubble -= 1;
       this.bubbles.push({
@@ -382,7 +385,7 @@ export class LiquidBar {
         this.acc.spark -= 1;
         this.sparks.push({ line: true, x: g.lineX, y: g.y0 + g.T / 2, vx: -(18 + Math.random() * 60), vy: dir * Math.random() * 16, age: 0, life: 0.45 + Math.random() * 0.5, s: (0.6 + Math.random() * 0.9) * Math.max(1, g.T / 3) });
       }
-    } else if (!g.line && !g.full && wet && g.p > 0.01) {
+    } else if (!g.line && !g.ambient && !g.full && wet && g.p > 0.01) {
       this.acc.spark += dt * 1.6;
       while (this.acc.spark >= 1) {
         this.acc.spark -= 1;
@@ -471,8 +474,8 @@ export class LiquidBar {
       bubble,
       dot,
       nose,
-      front: makeCanvas(lp, sp), // front water layer
-      back: makeCanvas(lp, sp), // back water layer
+      front: makeCanvas(lp * Q, sp * Q), // front water layer (half resolution, see Q)
+      back: makeCanvas(lp * Q, sp * Q), // back water layer
       tiles: new Map(), // wave tiles per layer + amplitude
     };
     this.badgeKit = null;
@@ -496,7 +499,7 @@ export class LiquidBar {
     if (kit.tiles.size > 120) kit.tiles.clear();
 
     const dpr = this.dpr; // device pixel ratio
-    const period = Math.max(16, Math.round(LAYERS[i].lambda * g.unit * dpr)); // one wavelength (device px)
+    const period = Math.max(16, 2 * Math.round((LAYERS[i].lambda * g.unit * dpr) / 2)); // one wavelength (device px, even so the half-res mask tiles exactly)
     const w = period * 2; // two periods: the third harmonic below repeats too
     const a = ampQ * dpr; // amplitude (device px)
     const pad = Math.ceil(4 * g.unit * dpr) + 2; // room for the glow line
@@ -510,8 +513,9 @@ export class LiquidBar {
      */
     const yAt = (x) => cy + a * (0.72 * Math.sin((TAU * x) / period + phase) + 0.28 * Math.sin((TAU * 3 * x) / w + 1.1 + phase));
 
-    const air = makeCanvas(w, h); // opaque above the surface
+    const air = makeCanvas(w * Q, h * Q); // opaque above the surface, at the layers' resolution
     const ac = air.getContext('2d'); // air context
+    ac.scale(Q, Q);
     ac.beginPath();
     ac.moveTo(0, 0);
     for (let x = 0; x <= w; x += 2) ac.lineTo(x, yAt(x));
@@ -564,43 +568,65 @@ export class LiquidBar {
 
   /**
    * Paints one water layer offscreen: colour + gloss, then cuts the air above the waves.
+   * Inputs are device px; the layer itself is Q (half) resolution — water is soft, and the crisp
+   * surface line is drawn at full resolution on the main canvas.
    * @param {HTMLCanvasElement} cv layer canvas
    * @param {object} s layer surface
    * @param {object} g frame geometry
    * @param {number} endP liquid front (device px)
-   * @param {number} rp nose radius (device px)
+   * @param {number} rp nose radius (device px), 0 = no rounded front
+   * @param {number} feather soft fade length at the front (device px), 0 = hard front
    * @param {boolean} gloss add the glassy highlight
    * @returns {void}
    */
-  paintLayer(cv, s, g, endP, rp, gloss) {
+  paintLayer(cv, s, g, endP, rp, feather, gloss) {
     const c = cv.getContext('2d'); // layer context
+    const e = endP * Q; // front in layer px
     c.globalCompositeOperation = 'source-over';
     // Only the part that held water last frame or holds it now needs clearing.
-    c.clearRect(0, 0, Math.min(cv.width, Math.ceil(Math.max(endP, cv.wbExtent ?? cv.width)) + 2), cv.height);
-    cv.wbExtent = Math.max(0, endP);
-    if (endP <= 0) return;
-    const top = s.yTop + 1; // start inside the tile's solid air rows, so no seam is left above
-    const body = c.createLinearGradient(0, 0, g.full ? cv.width : Math.max(endP, 80 * this.dpr), 0); // colours along the bar
+    c.clearRect(0, 0, Math.min(cv.width, Math.ceil(Math.max(e, cv.wbExtent ?? cv.width)) + 2), cv.height);
+    cv.wbExtent = Math.max(0, e);
+    if (e <= 0) return;
+    const top = s.yTop * Q + 0.5; // start inside the tile's solid air rows, so no seam is left above
+    const body = c.createLinearGradient(0, 0, g.full ? cv.width : Math.max(e, 40 * this.dpr), 0); // colours along the bar
     body.addColorStop(0, g.theme.c[0]);
     body.addColorStop(0.55, g.theme.c[1]);
     body.addColorStop(1, g.theme.c[2]);
     c.fillStyle = body;
-    c.fillRect(0, top, endP, cv.height - top);
+    c.fillRect(0, top, e, cv.height - top);
     if (gloss) {
       const shine = c.createLinearGradient(0, top, 0, cv.height); // glassy top light
       shine.addColorStop(0, 'rgba(255,255,255,0.42)');
       shine.addColorStop(0.35, 'rgba(255,255,255,0.08)');
       shine.addColorStop(1, rgba(g.theme.glow, 0.24));
       c.fillStyle = shine;
-      c.fillRect(0, top, endP, cv.height - top);
+      c.fillRect(0, top, e, cv.height - top);
     }
     c.globalCompositeOperation = 'destination-out';
-    for (let x = s.ox - s.tile.w; x < endP; x += s.tile.w) c.drawImage(s.tile.air, x, s.yTop);
+    for (let x = s.ox - s.tile.w; x < endP; x += s.tile.w) c.drawImage(s.tile.air, x * Q, s.yTop * Q);
     if (rp > 0) {
-      const yn = this.surfAt(s, endP - rp); // where the rounded front starts
-      c.drawImage(this.kit.nose, endP - rp, yn, rp, rp);
+      const yn = this.surfAt(s, endP - rp) * Q; // where the rounded front starts
+      const r = rp * Q; // nose radius in layer px
+      c.drawImage(this.kit.nose, e - r, yn, r, r);
       c.fillStyle = '#000'; // destination-out uses the source alpha: it must be solid
-      c.fillRect(endP - rp, 0, rp + 2, yn); // flat top over the nose, matching its outline
+      c.fillRect(e - r, 0, r + 2, yn); // flat top over the nose, matching its outline
+    }
+    if (g.ambient) {
+      // "通透背景": light pools at the bottom and fades out towards the icons, front fades softly.
+      const fade = c.createLinearGradient(0, top, 0, cv.height); // vertical alpha profile
+      fade.addColorStop(0, 'rgba(0,0,0,0.72)');
+      fade.addColorStop(0.55, 'rgba(0,0,0,0.38)');
+      fade.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = fade;
+      c.fillRect(0, top, e, cv.height - top);
+      if (feather > 0) {
+        const f = feather * Q; // fade length in layer px
+        const soft = c.createLinearGradient(e - f, 0, e, 0); // soft front
+        soft.addColorStop(0, 'rgba(0,0,0,0)');
+        soft.addColorStop(1, 'rgba(0,0,0,1)');
+        c.fillStyle = soft;
+        c.fillRect(e - f, 0, f + 2, cv.height);
+      }
     }
     c.globalCompositeOperation = 'source-over';
   }
@@ -625,7 +651,7 @@ export class LiquidBar {
     }
     if (g.line) {
       this.drawLine(g, g.alpha * (1 - g.re));
-    } else {
+    } else if (!g.ambient) {
       ctx.fillStyle = rgba('#FFFFFF', 0.1 * g.alpha * (1 - g.re));
       ctx.fillRect(0, g.atBottom ? g.S - 1 : 0, g.L, 1);
     }
@@ -644,25 +670,29 @@ export class LiquidBar {
   drawLiquid(g) {
     const { ctx, t, dpr, kit } = this; // context, clock, pixel ratio, sprites
     const { L, S, end, theme } = g; // geometry shortcuts
+    const amb = g.ambient; // "通透背景": everything much fainter, soft front
     const breath = 1 - 0.16 * g.re * (0.5 + 0.5 * Math.sin(t * 2.6)); // pulse while reminding
-    const a = g.alpha * 0.62 * (1 + 0.38 * g.re) * breath; // body alpha
+    const a = g.alpha * (amb ? 0.34 * (1 + g.re) : 0.62 * (1 + 0.38 * g.re)) * breath; // body alpha
     const k = 0.45 + 0.55 * g.alpha; // highlight strength
-    const R = g.full ? 0 : clamp(Math.min((S - g.top) * 0.5, 12 * g.unit), 0, Math.max(0, end)); // nose radius
-    const endP = g.full ? kit.front.width : end * dpr; // liquid front (device px)
+    const R = g.full || amb ? 0 : clamp(Math.min((S - g.top) * 0.5, 12 * g.unit), 0, Math.max(0, end)); // nose radius
+    const fullP = (g.vertical ? this.canvas.height : this.canvas.width) + 4; // whole bar (device px)
+    const endP = g.full ? fullP : end * dpr; // liquid front (device px)
     const rp = R * dpr; // nose radius (device px)
+    const fp = amb && !g.full ? Math.min(110 * g.unit, end * 0.6) * dpr : 0; // soft-front length (device px)
     const back = this.surface(1, g); // back wave layer
     const front = this.surface(0, g); // front wave layer
-    this.paintLayer(kit.back, back, g, endP, rp, false);
-    this.paintLayer(kit.front, front, g, endP, rp, true);
-    // Composite only the wet part of the layers (device px source → CSS px destination, 1:1).
-    const sw = Math.min(kit.front.width, Math.ceil(endP) + 2); // source width
-    const sh = kit.front.height; // source height
+    this.paintLayer(kit.back, back, g, endP, rp, fp, false);
+    this.paintLayer(kit.front, front, g, endP, rp, fp, !amb);
+    // Composite only the wet part of the half-resolution layers onto the main canvas.
+    const sw = Math.min(kit.front.width, Math.ceil(endP * Q) + 2); // source width (layer px)
+    const sh = kit.front.height; // source height (layer px)
+    const toCss = 1 / (Q * dpr); // layer px → CSS px
     ctx.globalAlpha = a * 0.5;
-    ctx.drawImage(kit.back, 0, 0, sw, sh, 0, 0, sw / dpr, sh / dpr);
+    ctx.drawImage(kit.back, 0, 0, sw, sh, 0, 0, sw * toCss, sh * toCss);
     ctx.globalAlpha = a;
-    ctx.drawImage(kit.front, 0, 0, sw, sh, 0, 0, sw / dpr, sh / dpr);
+    ctx.drawImage(kit.front, 0, 0, sw, sh, 0, 0, sw * toCss, sh * toCss);
 
-    ctx.globalAlpha = 0.6 * k;
+    ctx.globalAlpha = (amb ? 0.32 : 0.6) * k;
     ctx.imageSmoothingQuality = 'medium'; // mipmapped downscale: steady rings, no twinkling
     for (const b of this.bubbles) ctx.drawImage(kit.bubble, b.x - b.r, b.y - b.r, b.r * 2, b.r * 2);
     ctx.imageSmoothingQuality = 'low';
@@ -670,14 +700,14 @@ export class LiquidBar {
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'lighter';
     const deep = Math.min(S, g.top + g.amp); // lowest trough: below it everything is water
-    const bodyEnd = g.full ? L : Math.max(0, end - R); // where the straight body ends
+    const bodyEnd = g.full ? L : Math.max(0, end - R - fp / dpr); // where the straight body ends
     const sweep = ((t % 4.6) / 4.6) * (Math.max(end, 200) + 260) - 130; // shimmer band centre
     const x0 = clamp(sweep - 50, 0, bodyEnd); // shimmer band left
     const x1 = clamp(sweep + 50, 0, bodyEnd); // shimmer band right
     if (x1 > x0) {
       const shine = ctx.createLinearGradient(sweep - 50, 0, sweep + 50, 0); // shimmer band
       shine.addColorStop(0, 'rgba(255,255,255,0)');
-      shine.addColorStop(0.5, rgba('#FFFFFF', 0.14 * k));
+      shine.addColorStop(0.5, rgba('#FFFFFF', (amb ? 0.06 : 0.14) * k));
       shine.addColorStop(1, 'rgba(255,255,255,0)');
       ctx.fillStyle = shine;
       ctx.fillRect(x0, deep, x1 - x0, S - deep);
@@ -685,13 +715,24 @@ export class LiquidBar {
     ctx.globalCompositeOperation = 'source-over';
 
     // Surface line: stamp the pre-drawn line tiles up to where the rounded nose begins.
-    ctx.globalAlpha = k;
+    // In 通透背景 it is faint and fades out in steps across the soft front.
     const tile = front.tile; // front wave strip
-    const limit = endP - rp; // device x where the line stops
-    for (let x = front.ox - tile.w; x < limit; x += tile.w) {
-      const sw = Math.min(tile.w, limit - x); // visible part of this tile
-      ctx.drawImage(tile.line, 0, 0, sw, tile.h, x / dpr, front.yTop / dpr, sw / dpr, tile.h / dpr);
+    const lineK = amb ? 0.36 * k : k; // surface line strength
+    const steps = amb && fp > 0 ? 6 : 1; // fade steps over the soft front
+    const solid = endP - rp - (steps > 1 ? fp * 0.9 : 0); // line is fully drawn up to here
+    for (let n = 0; n < steps; n++) {
+      const from = n === 0 ? -Infinity : solid + ((n - 1) / (steps - 1)) * fp * 0.9; // segment start
+      const to = n === 0 ? solid : solid + (n / (steps - 1)) * fp * 0.9; // segment end
+      ctx.globalAlpha = lineK * (1 - n / steps);
+      for (let x = front.ox - tile.w; x < to; x += tile.w) {
+        const sx = Math.max(0, from - x); // first visible tile column
+        const sw2 = Math.min(tile.w, to - x) - sx; // visible width of this tile piece
+        if (sw2 <= 0) continue;
+        ctx.drawImage(tile.line, sx, 0, sw2, tile.h, (x + sx) / dpr, front.yTop / dpr, sw2 / dpr, tile.h / dpr);
+      }
     }
+    const limit = endP - rp; // device x where the nose begins
+    ctx.globalAlpha = lineK;
     if (R > 0) {
       const ys = this.surfAt(front, limit) / dpr; // surface where the nose starts
       ctx.beginPath(); // the nose outline is short: drawing it directly is cheap
@@ -708,11 +749,15 @@ export class LiquidBar {
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'lighter';
     if (!g.full) {
-      const glow = ctx.createRadialGradient(end, S * 0.6, 0, end, S * 0.6, S * 1.15); // glowing liquid front
-      glow.addColorStop(0, rgba(theme.glow, 0.45 * k * (1 - g.dk) * clamp(end / S, 0, 1))); // grows in, no pop
+      // Fill: a bright glow at the front. 通透背景: a faint pool of light low inside the soft front.
+      const gx = amb ? end - fp / dpr * 0.45 : end; // glow centre x
+      const gy = S * (amb ? 0.9 : 0.6); // glow centre y
+      const gr = S * (amb ? 1.4 : 1.15); // glow radius
+      const glow = ctx.createRadialGradient(gx, gy, 0, gx, gy, gr); // glowing liquid front
+      glow.addColorStop(0, rgba(theme.glow, (amb ? 0.2 : 0.45) * k * (1 - g.dk) * clamp(end / S, 0, 1))); // grows in, no pop
       glow.addColorStop(1, rgba(theme.glow, 0));
       ctx.fillStyle = glow;
-      ctx.fillRect(end - S * 1.2, -S * 0.6, S * 2.4, S * 2.4);
+      ctx.fillRect(gx - gr, gy - gr, gr * 2, gr * 2);
     }
     ctx.fillStyle = rgba('#FFFFFF', 0.9 * k);
     for (const s of this.sparks) {
@@ -1012,21 +1057,20 @@ export class LiquidBar {
    * @returns {void}
    */
   drawLabel(g, k) {
-    const { ctx } = this; // context
+    const { ctx, dpr } = this; // context, pixel ratio
     const fs = clamp(g.S * 0.22, 9, 13); // label font size
-    ctx.font = `600 ${fs}px Bahnschrift, ${FONT}`;
-    const w = ctx.measureText(this.label).width; // label width
-    const head = g.line ? g.lineX : g.end; // label follows the front, flips left near the end
-    const x = g.full ? g.L - w - 8 : head + 10 + w < g.L - 4 ? head + 10 : head - w - 12; // label left
+    const key = `${this.label}|${fs}|${this.kit.key}`; // the sprite changes about once a second
+    if (this.labelSprite?.key !== key) {
+      // A soft dark halo keeps it readable over anything, without a box around it.
+      this.labelSprite = { key, ...this.textSprite(this.label, `600 ${fs}px Bahnschrift, ${FONT}`, fs, 'rgba(255,255,255,0.95)', 'rgba(0,6,18,0.95)') };
+    }
+    const s = this.labelSprite; // label sprite
+    const head = g.line ? g.lineX : g.ambient ? g.end - 30 * g.unit : g.end; // follows the front, flips left near the end
+    const x = g.full ? g.L - s.w - 8 : head + 10 + s.w < g.L - 4 ? head + 10 : head - s.w - 12; // label left
     const y = g.line ? (g.atBottom ? g.y0 - fs * 0.8 : g.T + fs * 0.8) : Math.max(fs * 0.7, g.S * 0.15); // label middle
-    const lx = clamp(x, 6, g.L - w - 6); // label left after clamping
-    ctx.fillStyle = `rgba(4, 10, 24, ${0.38 * k})`; // a small pill keeps it readable (cheaper than shadowBlur)
-    ctx.beginPath();
-    ctx.roundRect(lx - 5, y - fs * 0.62, w + 10, fs * 1.24, fs * 0.62);
-    ctx.fill();
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'left';
-    ctx.fillStyle = rgba('#FFFFFF', 0.94 * k);
-    ctx.fillText(this.label, lx, y + 0.5);
+    const lx = clamp(x, 6, g.L - s.w - 6); // label left after clamping
+    ctx.globalAlpha = (g.ambient ? 0.8 : 1) * k;
+    ctx.drawImage(s.cv, lx - s.pad, y - s.h / 2, s.cv.width / dpr, s.cv.height / dpr);
+    ctx.globalAlpha = 1;
   }
 }

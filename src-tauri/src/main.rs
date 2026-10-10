@@ -43,7 +43,7 @@ impl Default for Settings {
         Self {
             interval_min: 45,
             theme: "ocean".into(),
-            mode: "fill".into(),
+            mode: "ambient".into(),
             opacity: 0.7,
             text: "该喝水啦".into(),
             show_time: true,

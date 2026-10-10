@@ -259,13 +259,15 @@ input[type='range']::-webkit-slider-thumb {
 input[type='range']:hover::-webkit-slider-thumb { transform: scale(1.1); }
 input[type='range']:active::-webkit-slider-thumb { transform: scale(1.2); }
 
-.seg { position: relative; display: grid; grid-template-columns: 1fr 1fr; height: 40px; padding: 4px; border-radius: 13px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); }
-.seg button { position: relative; z-index: 1; border: 0; background: none; color: var(--mute); font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; transition: color 0.3s; }
-.seg button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.seg { position: relative; display: grid; grid-template-columns: 1fr 1fr 1fr; height: 40px; padding: 4px; border-radius: 13px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); }
+.seg button { position: relative; z-index: 1; padding: 0; border: 0; background: none; color: var(--mute); font-weight: 600; font-size: 12.5px; display: flex; align-items: center; justify-content: center; gap: 4px; cursor: pointer; transition: color 0.3s; white-space: nowrap; }
+.seg button svg { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 .seg button[data-mode='fill'] svg { fill: currentColor; stroke: none; opacity: 0.9; }
+.seg button[data-mode='ambient'] svg { fill: currentColor; stroke: none; opacity: 0.35; }
 .seg button.on { color: var(--dark); }
-.seg-thumb { position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px); border-radius: 10px; background: linear-gradient(120deg, var(--c0), var(--c1)); box-shadow: 0 6px 18px -6px var(--c1); transition: transform 0.4s cubic-bezier(0.3, 1.35, 0.5, 1); }
-.seg[data-v='line'] .seg-thumb { transform: translateX(100%); }
+.seg-thumb { position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc((100% - 8px) / 3); border-radius: 10px; background: linear-gradient(120deg, var(--c0), var(--c1)); box-shadow: 0 6px 18px -6px var(--c1); transition: transform 0.4s cubic-bezier(0.3, 1.35, 0.5, 1); }
+.seg[data-v='fill'] .seg-thumb { transform: translateX(100%); }
+.seg[data-v='line'] .seg-thumb { transform: translateX(200%); }
 
 .themes { display: grid; grid-template-columns: repeat(6, 1fr); gap: 9px; }
 .theme {
