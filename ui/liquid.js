@@ -21,7 +21,7 @@ const DRAIN = 1.35; // seconds the "drinking" drain animation lasts
 const FLOAT = 2.3; // seconds a floating message lives
 const TAU = Math.PI * 2; // full turn
 const FONT = '"Microsoft YaHei UI", "Segoe UI", sans-serif'; // UI font stack
-const HINT = '点击喝完 · 右键稍后'; // interaction hint under the reminder
+const HINT = '点一下记录 · 右键稍后'; // interaction hint next to the reminder
 /** Two surface layers: wavelength (px at a 48 px bar), scroll speed (px/s), vertical offset (px). */
 const LAYERS = [
   { lambda: 170, speed: 34, dy: 0 },
@@ -179,7 +179,6 @@ export class LiquidBar {
     this.opts = { theme: 'ocean', mode: 'fill', opacity: 0.7, side: 'bottom', compact: false, text: '该喝水啦' }; // look & layout
     this.target = 0; // progress the bar should reach (0..1)
     this.p = 0; // progress currently drawn, eases toward target
-    this.label = ''; // small status text, e.g. the countdown
     this.remind = false; // reminder wanted
     this.r = 0; // reminder blend 0..1
     this.remindAge = 99; // seconds since the reminder started
@@ -198,7 +197,6 @@ export class LiquidBar {
     this.acc = { bubble: 0, spark: 0, ring: 0 }; // fractional spawn accumulators
     this.kit = null; // per theme/size sprites, rebuilt by prepare()
     this.badgeKit = null; // reminder badge sprites, rebuilt when the text changes
-    this.labelSprite = null; // countdown label sprite, rebuilt when its text changes
     new ResizeObserver(() => this.resize()).observe(canvas);
     this.resize();
   }
@@ -659,7 +657,6 @@ export class LiquidBar {
     this.drawDrops(g);
     if (g.re > 0.01) this.drawReminder(g);
     this.drawFloats(g);
-    if (this.label && !this.opts.compact && g.re < 0.99 && !g.draining) this.drawLabel(g, 1 - g.re);
   }
 
   /**
@@ -1047,30 +1044,6 @@ export class LiquidBar {
       const y = g.S / 2 - easeOut(k) * g.S * 0.22; // rising
       ctx.drawImage(s.cv, g.L / 2 - s.w / 2 - s.pad, y - s.h / 2, s.cv.width / dpr, s.cv.height / dpr);
     }
-    ctx.globalAlpha = 1;
-  }
-
-  /**
-   * Small countdown label riding next to the liquid front.
-   * @param {object} g frame geometry
-   * @param {number} k alpha
-   * @returns {void}
-   */
-  drawLabel(g, k) {
-    const { ctx, dpr } = this; // context, pixel ratio
-    const fs = clamp(g.S * 0.22, 9, 13); // label font size
-    const key = `${this.label}|${fs}|${this.kit.key}`; // the sprite changes about once a second
-    if (this.labelSprite?.key !== key) {
-      // A soft dark halo keeps it readable over anything, without a box around it.
-      this.labelSprite = { key, ...this.textSprite(this.label, `600 ${fs}px Bahnschrift, ${FONT}`, fs, 'rgba(255,255,255,0.95)', 'rgba(0,6,18,0.95)') };
-    }
-    const s = this.labelSprite; // label sprite
-    const head = g.line ? g.lineX : g.ambient ? g.end - 30 * g.unit : g.end; // follows the front, flips left near the end
-    const x = g.full ? g.L - s.w - 8 : head + 10 + s.w < g.L - 4 ? head + 10 : head - s.w - 12; // label left
-    const y = g.line ? (g.atBottom ? g.y0 - fs * 0.8 : g.T + fs * 0.8) : Math.max(fs * 0.7, g.S * 0.15); // label middle
-    const lx = clamp(x, 6, g.L - s.w - 6); // label left after clamping
-    ctx.globalAlpha = (g.ambient ? 0.8 : 1) * k;
-    ctx.drawImage(s.cv, lx - s.pad, y - s.h / 2, s.cv.width / dpr, s.cv.height / dpr);
     ctx.globalAlpha = 1;
   }
 }

@@ -3,12 +3,10 @@ import { LiquidBar, THEMES, rgba, wave, fmtClock, clamp, easeInOut } from './liq
 const { invoke } = window.__TAURI__.core; // backend commands
 const { listen } = window.__TAURI__.event; // backend events
 const appWindow = window.__TAURI__.window.getCurrentWindow(); // this settings window
-const GOAL = 8; // daily cups goal shown in the cups row
 const PRESETS = [15, 30, 45, 60, 90]; // quick interval chips (minutes)
+const SIPS = [1, 2, 3, 5]; // per-drink presets, in sips (the sip size itself is a setting, default 20 ml)
 const TAU = Math.PI * 2; // full turn
 const DEMO = 11; // seconds per preview loop
-const CHECK = '<svg viewBox="0 0 12 12"><path d="M2.5 6.3l2.3 2.3 4.7-4.9"/></svg>'; // tick icon
-const CUP = '<svg class="cup" viewBox="0 0 22 27"><path class="water" d="M4.6 11.2c3.2-1.6 6.4 1.4 12.8 0l-1.5 12.4a1.6 1.6 0 0 1-1.6 1.4H7.7a1.6 1.6 0 0 1-1.6-1.4z"/><path class="glass" d="M2.6 2.6h16.8l-2.2 21.2a2 2 0 0 1-2 1.8H6.8a2 2 0 0 1-2-1.8z"/></svg>'; // cup icon
 
 /**
  * Shortcut for getElementById.
@@ -80,18 +78,18 @@ function paintRange(input) {
 }
 
 /**
- * Builds the static lists (chips, themes, cups) once.
+ * Builds the static lists (chips, themes) once.
  * @returns {void}
  */
 function build() {
   $('chips').innerHTML = PRESETS.map((m) => `<button class="chip" data-min="${m}">${m}</button>`).join('');
+  $('amounts').innerHTML = SIPS.map((n) => `<button class="chip" data-sips="${n}">${n} 口</button>`).join('');
   $('themes').innerHTML = Object.entries(THEMES)
     .map(([key, th]) => {
       const vars = `--a:${th.c[0]};--b:${th.c[1]};--c:${th.c[2]}`; // per-swatch colours
-      return `<button class="theme" data-theme="${key}" style="${vars}"><i class="liq back"></i><i class="liq"></i><span>${th.name}</span><b class="tick">${CHECK}</b></button>`;
+      return `<button class="theme" data-theme="${key}" style="${vars}" title="${th.name}"><i class="liq back"></i><i class="liq"></i></button>`;
     })
     .join('');
-  $('cupsRow').innerHTML = CUP.repeat(GOAL);
 }
 
 /**
@@ -99,10 +97,22 @@ function build() {
  * @returns {void}
  */
 function renderControls() {
-  $('ivNum').textContent = settings.intervalMin;
-  $('ivRange').value = Math.min(settings.intervalMin, 180);
-  paintRange($('ivRange'));
-  document.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', +c.dataset.min === settings.intervalMin));
+  if (document.activeElement !== $('ivInput')) $('ivInput').value = settings.intervalMin;
+  document.querySelectorAll('#chips .chip').forEach((c) => c.classList.toggle('on', +c.dataset.min === settings.intervalMin));
+  document.querySelectorAll('#amounts .chip').forEach((c) => c.classList.toggle('on', +c.dataset.sips === settings.drinkSips));
+  $('amtDesc').textContent = `${settings.drinkSips} 口 = ${settings.drinkSips * settings.sipMl} ml，提醒时点一下就记一次`;
+  if (document.activeElement !== $('sipInput')) $('sipInput').value = settings.sipMl;
+  $('themeName').textContent = (THEMES[settings.theme] || THEMES.ocean).name;
+  $('goalRange').value = settings.goalMl;
+  paintRange($('goalRange'));
+  $('goalVal').textContent = `${settings.goalMl} ml`;
+  $('tWork').checked = settings.workOn;
+  $('hours').classList.toggle('off', !settings.workOn);
+  for (const [id, key] of [['wStart', 'workStart'], ['wEnd', 'workEnd'], ['lStart', 'lunchStart'], ['lEnd', 'lunchEnd']]) {
+    if (document.activeElement !== $(id)) $(id).value = settings[key];
+  }
+  $('tWeekday').checked = settings.workdaysOnly;
+  $('btnDrinkText').textContent = `喝了 ${settings.drinkSips} 口 · ${settings.drinkSips * settings.sipMl} ml`;
   $('seg').dataset.v = settings.mode;
   document.querySelectorAll('#seg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === settings.mode));
   $('opRange').value = Math.round(settings.opacity * 100);
@@ -110,30 +120,38 @@ function renderControls() {
   $('opVal').textContent = `${Math.round(settings.opacity * 100)}%`;
   document.querySelectorAll('.theme').forEach((t) => t.classList.toggle('on', t.dataset.theme === settings.theme));
   if (document.activeElement !== $('msg')) $('msg').value = settings.text;
-  $('tTime').checked = settings.showTime;
   $('tSound').checked = settings.sound;
   $('tAuto').checked = settings.autostart;
   applyTheme();
 }
 
 /**
- * Updates the cups row; newly filled cups pop.
- * @param {boolean} animate whether new cups should pop
+ * Updates today's ml meter and the pause button.
  * @returns {void}
  */
-function renderCups(animate) {
-  const n = snap.settings.cups; // cups today
-  [...$('cupsRow').children].forEach((cup, i) => {
-    const on = i < n; // this cup is filled
-    if (animate && on && !cup.classList.contains('on')) {
-      cup.classList.add('pop');
-      setTimeout(() => cup.classList.remove('pop'), 750);
-    }
-    cup.classList.toggle('on', on);
-  });
-  $('cupsN').textContent = n;
-  $('cupsMore').textContent = n > GOAL ? `+${n - GOAL}` : '';
+function renderMeter() {
+  const { drankMl, goalMl, sipMl } = snap.settings; // today's ml, the goal, ml per sip
+  $('mlNow').textContent = drankMl;
+  $('mlGoal').textContent = goalMl;
+  $('mlSips').textContent = `≈ ${Math.round(drankMl / sipMl)} 口`;
+  $('mlFill').style.width = `${clamp(drankMl / goalMl, 0, 1) * 100}%`;
   $('btnPause').textContent = snap.pausedAt != null ? '继续' : '暂停';
+}
+
+/**
+ * When the next work period starts, for the "resting" text.
+ * @param {object} s settings
+ * @returns {string} e.g. "13:30" or "明天 09:00"
+ */
+function nextWorkStart(s) {
+  const d = new Date(); // now
+  const now = d.getHours() * 60 + d.getMinutes(); // minutes since midnight
+  const at = (v) => +v.slice(0, 2) * 60 + +v.slice(3, 5); // "HH:MM" → minutes
+  const weekend = s.workdaysOnly && (d.getDay() === 0 || d.getDay() === 6); // no work today
+  if (!weekend && now < at(s.workStart)) return s.workStart;
+  if (!weekend && now >= at(s.lunchStart) && now < at(s.lunchEnd)) return s.lunchEnd;
+  const friday = s.workdaysOnly && (d.getDay() === 5 || d.getDay() === 6 || d.getDay() === 0); // next workday is Monday
+  return `${friday ? '周一' : '明天'} ${s.workStart}`;
 }
 
 /**
@@ -321,9 +339,10 @@ class Orb {
 function renderOrbText(progress) {
   const alert = snap.reminding; // reminder showing
   const paused = snap.pausedAt != null; // timer paused
-  setText($('orbCap'), alert ? '时间到啦' : paused ? '已暂停' : '距离下次喝水');
-  setText($('orbClock'), alert ? snap.settings.text : fmtClock(snap.intervalMs * (1 - progress)));
-  setText($('orbPct'), alert ? '点「我喝完了」重新开始' : `${Math.floor(progress * 100)}%  ·  每 ${snap.settings.intervalMin} 分钟`);
+  const rest = snap.resting && !alert; // outside work hours
+  setText($('orbCap'), alert ? '时间到啦' : rest ? '休息时间' : paused ? '已暂停' : '距离下次喝水');
+  setText($('orbClock'), alert ? snap.settings.text : rest ? nextWorkStart(snap.settings) : fmtClock(snap.intervalMs * (1 - progress)));
+  setText($('orbPct'), alert ? '点击任务栏或「喝了」记录' : rest ? '上班后自动开始提醒' : `${Math.floor(progress * 100)}%  ·  每 ${snap.settings.intervalMin} 分钟`);
   if ($('orbInfo').classList.contains('alert') !== alert) $('orbInfo').classList.toggle('alert', alert);
 }
 
@@ -357,10 +376,8 @@ function runDemo(dt) {
   if (prev < fillEnd && demoT >= fillEnd) preview.startReminder();
   if (prev < drinkAt && demoT >= drinkAt) {
     preview.target = 0;
-    preview.drink('+1 杯 · 今天第 1 杯');
+    preview.drink(`+${settings.drinkSips * settings.sipMl} ml`);
   }
-  const left = settings.intervalMin * 60000 * (1 - preview.target); // fake countdown
-  preview.label = settings.showTime ? `💧 ${fmtClock(left)}` : '';
   preview.frame(dt);
 }
 
@@ -418,7 +435,7 @@ await listen('state', (e) => {
     settings = { ...snap.settings, ...pending }; // unsent edits stay on top
     renderControls();
   }
-  renderCups(true);
+  renderMeter();
 });
 const first = await invoke('get_state'); // initial snapshot
 snap = early && early.seq > first.seq ? early : first;
@@ -426,11 +443,38 @@ settings = { ...snap.settings };
 
 build();
 renderControls();
-renderCups(false);
+renderMeter();
 tickClock();
 setInterval(tickClock, 10000);
 
-$('ivRange').addEventListener('input', (e) => change({ intervalMin: +e.target.value }));
+$('ivInput').addEventListener('change', (e) => change({ intervalMin: clamp(Math.round(+e.target.value) || 30, 1, 180) }));
+
+/**
+ * Shows one settings tab.
+ * @param {string} tab tab id: rhythm | look | general
+ * @returns {void}
+ */
+function showTab(tab) {
+  $('tabs').dataset.v = tab;
+  document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+  document.querySelectorAll('.page').forEach((p) => p.classList.toggle('on', p.dataset.page === tab));
+  try {
+    localStorage.setItem('wb.tab', tab);
+  } catch {
+    // storage blocked: the tab just isn't remembered
+  }
+}
+$('tabs').addEventListener('click', (e) => {
+  const tab = e.target.closest('button')?.dataset.tab; // clicked tab
+  if (tab) showTab(tab);
+});
+let lastTab = 'rhythm'; // tab to open with
+try {
+  lastTab = localStorage.getItem('wb.tab') || 'rhythm';
+} catch {
+  // storage blocked: start on the first tab
+}
+showTab(lastTab);
 $('chips').addEventListener('click', (e) => {
   const m = e.target.closest('.chip')?.dataset.min; // chosen preset
   if (m) change({ intervalMin: +m });
@@ -448,7 +492,20 @@ $('msg').addEventListener('input', (e) => change({ text: e.target.value }));
 $('msg').addEventListener('blur', () => {
   if (!settings.text.trim()) change({ text: '该喝水啦' });
 });
-$('tTime').addEventListener('change', (e) => change({ showTime: e.target.checked }));
+$('amounts').addEventListener('click', (e) => {
+  const sips = e.target.closest('.chip')?.dataset.sips; // chosen number of sips
+  if (sips) change({ drinkSips: +sips });
+});
+$('sipInput').addEventListener('change', (e) => change({ sipMl: clamp(Math.round(+e.target.value) || 20, 5, 60) }));
+$('goalRange').addEventListener('input', (e) => change({ goalMl: +e.target.value }));
+$('tWork').addEventListener('change', (e) => change({ workOn: e.target.checked }));
+$('tWeekday').addEventListener('change', (e) => change({ workdaysOnly: e.target.checked }));
+for (const [id, key] of [['wStart', 'workStart'], ['wEnd', 'workEnd'], ['lStart', 'lunchStart'], ['lEnd', 'lunchEnd']]) {
+  // "change" fires once a full HH:MM is entered (not on every keystroke).
+  $(id).addEventListener('change', (e) => {
+    if (e.target.value) change({ [key]: e.target.value });
+  });
+}
 $('tSound').addEventListener('change', (e) => change({ sound: e.target.checked }));
 $('tAuto').addEventListener('change', (e) => change({ autostart: e.target.checked }));
 $('btnDrink').addEventListener('click', () => invoke('action', { what: 'drink' }));

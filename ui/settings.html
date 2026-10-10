@@ -13,17 +13,11 @@
         <stop offset="0.55" style="stop-color: var(--c1)" />
         <stop offset="1" style="stop-color: var(--c2)" />
       </linearGradient>
-      <linearGradient id="cupWater" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" style="stop-color: var(--glow)" />
-        <stop offset="1" style="stop-color: var(--c2)" />
-      </linearGradient>
     </defs>
   </svg>
 
   <div class="shell">
-    <div class="atmos" aria-hidden="true">
-      <i class="blob b1"></i><i class="blob b2"></i><i class="blob b3"></i>
-    </div>
+    <div class="atmos" aria-hidden="true"><i class="blob b1"></i><i class="blob b2"></i><i class="blob b3"></i></div>
 
     <header class="titlebar" data-tauri-drag-region>
       <div class="brand" data-tauri-drag-region>
@@ -38,7 +32,8 @@
     </header>
 
     <main>
-      <section class="left">
+      <!-- Left: today at a glance -->
+      <aside class="dash">
         <div class="orb reveal" style="--d: 0">
           <canvas id="orb"></canvas>
           <div class="orb-info" id="orbInfo">
@@ -48,75 +43,155 @@
           </div>
         </div>
 
-        <div class="cups reveal" style="--d: 1">
-          <div class="cups-row" id="cupsRow"></div>
-          <div class="cups-text">今日已喝 <b id="cupsN">0</b> <span>/ 8 杯</span> <em id="cupsMore"></em></div>
+        <div class="meter reveal" style="--d: 1">
+          <div class="meter-top">
+            <span>今日已喝</span><b id="mlNow">0</b><small>/ <span id="mlGoal">1000</span> ml</small><em id="mlSips">≈ 0 口</em>
+          </div>
+          <div class="meter-bar"><i id="mlFill"></i></div>
         </div>
 
         <div class="actions reveal" style="--d: 2">
           <button class="btn primary" id="btnDrink">
-            <svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7" /></svg>我喝完了
+            <svg viewBox="0 0 24 24"><path d="M12 3.5c2 3 5.6 6.6 5.6 10a5.6 5.6 0 0 1-11.2 0c0-3.4 3.6-7 5.6-10z" /></svg><span id="btnDrinkText">喝了 60 ml</span>
           </button>
-          <button class="btn" id="btnPause">暂停</button>
-          <button class="btn" id="btnTest">预览提醒</button>
+          <div class="pair">
+            <button class="btn" id="btnPause">暂停</button>
+            <button class="btn" id="btnTest">预览提醒</button>
+          </div>
         </div>
-      </section>
+        <p class="hint reveal" style="--d: 3">双击任务栏空白处，随时重新计时</p>
+      </aside>
 
-      <section class="right">
-        <div class="card preview reveal" style="--d: 1">
-          <div class="mock">
-            <div class="mock-icons">
-              <i class="ic start"><b></b><b></b><b></b><b></b></i>
-              <i class="ic search"><s></s>搜索</i>
-              <i class="ic app a1"></i><i class="ic app a2 active"></i><i class="ic app a3"></i><i class="ic app a4"></i><i class="ic app a5"></i>
+      <!-- Right: settings, one topic per tab -->
+      <section class="panel">
+        <nav class="tabs reveal" id="tabs" style="--d: 1">
+          <i class="tab-ink"></i>
+          <button data-tab="rhythm"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="7.5" /><path d="M12 9.5V13l2.5 2M9.5 2.5h5" /></svg>提醒节奏</button>
+          <button data-tab="look"><svg viewBox="0 0 24 24"><path d="M3 15c3-3 5 3 9 0s6 3 9 0M3 10c3-3 5 3 9 0s6 3 9 0" /></svg>外观</button>
+          <button data-tab="general"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" /></svg>通用</button>
+        </nav>
+
+        <div class="pages reveal" style="--d: 2">
+          <!-- 提醒节奏 -->
+          <div class="page" data-page="rhythm">
+            <h3 class="gtitle"><em>RHYTHM</em>喝水节奏</h3>
+            <div class="group">
+              <div class="row">
+                <i class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="7.5" /><path d="M12 9.5V13l2.5 2" /></svg></i>
+                <div class="txt"><b>提醒间隔</b><small>30 分钟起身喝几口，最适合办公</small></div>
+                <div class="ctl">
+                  <div class="chips" id="chips"></div>
+                  <label class="num"><input type="number" id="ivInput" min="1" max="180" /><span>分</span></label>
+                </div>
+              </div>
+              <div class="row">
+                <i class="ico"><svg viewBox="0 0 24 24"><path d="M12 3.5c2 3 5.6 6.6 5.6 10a5.6 5.6 0 0 1-11.2 0c0-3.4 3.6-7 5.6-10z" /></svg></i>
+                <div class="txt"><b>每次喝</b><small id="amtDesc">3 口 = 60 ml</small></div>
+                <div class="ctl"><div class="chips" id="amounts"></div></div>
+              </div>
+              <div class="row">
+                <i class="ico"><svg viewBox="0 0 24 24"><path d="M7 4.5h10l-1.4 15a1.5 1.5 0 0 1-1.5 1.3H9.9a1.5 1.5 0 0 1-1.5-1.3z" /><path d="M7.6 10.5h8.8" /></svg></i>
+                <div class="txt"><b>一口的量</b><small>默认 20 ml · 研究中自然的一口约 9–20 ml</small></div>
+                <div class="ctl"><label class="num"><input type="number" id="sipInput" min="5" max="60" /><span>ml</span></label></div>
+              </div>
+              <div class="row">
+                <i class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" /><circle cx="12" cy="12" r="0.8" /></svg></i>
+                <div class="txt"><b>上班喝水目标</b><small>指南：每天 1500–1700 ml</small></div>
+                <div class="ctl range"><input type="range" id="goalRange" min="500" max="2000" step="100" /><b id="goalVal">1000 ml</b></div>
+              </div>
             </div>
-            <div class="mock-tray"><span class="caret">⌃</span><span>中</span><span class="clock"><b id="mockTime">00:00</b><small id="mockDate">2026/1/1</small></span></div>
-            <canvas id="preview"></canvas>
-          </div>
-          <div class="cap"><i class="live"></i>实时预览 · 你的任务栏会变成这样</div>
-        </div>
 
-        <div class="field reveal" style="--d: 2">
-          <div class="label"><em>INTERVAL</em>提醒间隔</div>
-          <div class="interval">
-            <div class="big"><span id="ivNum">45</span><small>分钟</small></div>
-            <div class="chips" id="chips"></div>
-          </div>
-          <input type="range" id="ivRange" min="1" max="180" step="1" />
-        </div>
-
-        <div class="row2 reveal" style="--d: 3">
-          <div class="field">
-            <div class="label"><em>STYLE</em>任务栏样式</div>
-            <div class="seg" id="seg">
-              <i class="seg-thumb"></i>
-              <button data-mode="ambient"><svg viewBox="0 0 24 24"><rect x="2" y="9" width="20" height="11" rx="2" /></svg>通透背景</button>
-              <button data-mode="fill"><svg viewBox="0 0 24 24"><path d="M2 13c3-3 5 3 8 0s5 3 8 0 3-1 4 0v7H2z" /></svg>液态填充</button>
-              <button data-mode="line"><svg viewBox="0 0 24 24"><path d="M2 8h14" /><circle cx="19" cy="8" r="2.4" /></svg>流光细线</button>
+            <h3 class="gtitle"><em>WORK HOURS</em>工作时段</h3>
+            <div class="group">
+              <div class="row">
+                <i class="ico"><svg viewBox="0 0 24 24"><rect x="3.5" y="7.5" width="17" height="12" rx="2.5" /><path d="M9 7.5V5.5a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 5.5v2M3.5 12.5h17" /></svg></i>
+                <div class="txt"><b>只在上班时提醒</b><small>午休和下班后自动休息，回到岗位重新计时</small></div>
+                <div class="ctl"><label class="switch"><input type="checkbox" id="tWork" /><i></i></label></div>
+              </div>
+              <div class="sub" id="hours">
+                <div class="row slim">
+                  <div class="txt"><b>上班时间</b></div>
+                  <div class="ctl"><input type="time" id="wStart" /><span class="dash-sep">–</span><input type="time" id="wEnd" /></div>
+                </div>
+                <div class="row slim">
+                  <div class="txt"><b>午休</b></div>
+                  <div class="ctl"><input type="time" id="lStart" /><span class="dash-sep">–</span><input type="time" id="lEnd" /></div>
+                </div>
+                <div class="row slim">
+                  <div class="txt"><b>仅工作日</b><small>遇到调休上班的周末可以关闭</small></div>
+                  <div class="ctl"><label class="switch"><input type="checkbox" id="tWeekday" /><i></i></label></div>
+                </div>
+              </div>
             </div>
           </div>
-          <div class="field">
-            <div class="label"><em>DENSITY</em>水体浓度<b id="opVal">70%</b></div>
-            <input type="range" id="opRange" min="15" max="100" step="1" />
-          </div>
-        </div>
 
-        <div class="field reveal" style="--d: 4">
-          <div class="label"><em>THEME</em>主题配色</div>
-          <div class="themes" id="themes"></div>
-        </div>
-
-        <div class="row2 reveal" style="--d: 5">
-          <div class="field">
-            <div class="label"><em>MESSAGE</em>提醒文字</div>
-            <input class="text" id="msg" maxlength="16" placeholder="该喝水啦" spellcheck="false" />
+          <!-- 外观 -->
+          <div class="page" data-page="look">
+            <div class="card preview">
+              <div class="mock">
+                <div class="mock-icons">
+                  <i class="ic start"><b></b><b></b><b></b><b></b></i>
+                  <i class="ic search"><s></s>搜索</i>
+                  <i class="ic app a1"></i><i class="ic app a2 active"></i><i class="ic app a3"></i><i class="ic app a4"></i><i class="ic app a5"></i>
+                </div>
+                <div class="mock-tray"><span class="caret">⌃</span><span>中</span><span class="clock"><b id="mockTime">00:00</b><small id="mockDate">2026/1/1</small></span></div>
+                <canvas id="preview"></canvas>
+              </div>
+              <div class="cap"><i class="live"></i>实时预览 · 你的任务栏会变成这样</div>
+            </div>
+            <div class="group">
+              <div class="row">
+                <i class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="13" width="18" height="7" rx="2" /><path d="M3 9h12" /><circle cx="18" cy="9" r="1.6" /></svg></i>
+                <div class="txt"><b>任务栏样式</b><small>通透背景最安静，液态填充最醒目</small></div>
+                <div class="ctl">
+                  <div class="seg" id="seg">
+                    <i class="seg-thumb"></i>
+                    <button data-mode="ambient">通透背景</button>
+                    <button data-mode="fill">液态填充</button>
+                    <button data-mode="line">流光细线</button>
+                  </div>
+                </div>
+              </div>
+              <div class="row">
+                <i class="ico"><svg viewBox="0 0 24 24"><circle cx="8.5" cy="9" r="4.5" /><circle cx="15.5" cy="9" r="4.5" /><circle cx="12" cy="15" r="4.5" /></svg></i>
+                <div class="txt"><b>主题配色</b><small id="themeName">深海</small></div>
+                <div class="ctl"><div class="themes" id="themes"></div></div>
+              </div>
+              <div class="row">
+                <i class="ico"><svg viewBox="0 0 24 24"><path d="M12 3.5c2 3 5.6 6.6 5.6 10a5.6 5.6 0 0 1-11.2 0c0-3.4 3.6-7 5.6-10z" /><path d="M8.5 14a3.5 3.5 0 0 0 3.5 3.5" /></svg></i>
+                <div class="txt"><b>水体浓度</b><small>越低越通透，任务栏图标越清楚</small></div>
+                <div class="ctl range"><input type="range" id="opRange" min="15" max="100" step="1" /><b id="opVal">70%</b></div>
+              </div>
+            </div>
           </div>
-          <div class="field">
-            <div class="label"><em>OPTIONS</em>选项</div>
-            <div class="toggles">
-              <label class="tog"><input type="checkbox" id="tTime" /><i></i>倒计时</label>
-              <label class="tog"><input type="checkbox" id="tSound" /><i></i>提示音</label>
-              <label class="tog"><input type="checkbox" id="tAuto" /><i></i>开机自启</label>
+
+          <!-- 通用 -->
+          <div class="page" data-page="general">
+            <h3 class="gtitle"><em>GENERAL</em>通用</h3>
+            <div class="group">
+              <div class="row">
+                <i class="ico"><svg viewBox="0 0 24 24"><path d="M4 6.5h16v9H9l-5 4z" /></svg></i>
+                <div class="txt"><b>提醒文字</b><small>时间到了任务栏上显示的话</small></div>
+                <div class="ctl"><input class="text" id="msg" maxlength="16" placeholder="该喝水啦" spellcheck="false" /></div>
+              </div>
+              <div class="row">
+                <i class="ico"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11" /></svg></i>
+                <div class="txt"><b>提示音</b><small>提醒出现时轻轻响三声水滴</small></div>
+                <div class="ctl"><label class="switch"><input type="checkbox" id="tSound" /><i></i></label></div>
+              </div>
+              <div class="row">
+                <i class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v8M7 6.2a7.5 7.5 0 1 0 10 0" /></svg></i>
+                <div class="txt"><b>开机自启</b><small>开机后安静地待在托盘里</small></div>
+                <div class="ctl"><label class="switch"><input type="checkbox" id="tAuto" /><i></i></label></div>
+              </div>
+            </div>
+
+            <h3 class="gtitle"><em>TIPS</em>小技巧</h3>
+            <div class="group tips">
+              <div class="row slim"><div class="txt"><b>双击任务栏空白处</b></div><div class="ctl"><span class="kbd">重新计时</span></div></div>
+              <div class="row slim"><div class="txt"><b>提醒出现时点一下</b></div><div class="ctl"><span class="kbd">记录喝水</span></div></div>
+              <div class="row slim"><div class="txt"><b>提醒出现时右键</b></div><div class="ctl"><span class="kbd">5 分钟后再提醒</span></div></div>
+              <div class="row slim"><div class="txt"><b>全屏游戏、视频</b></div><div class="ctl"><span class="kbd">自动隐藏</span></div></div>
             </div>
           </div>
         </div>

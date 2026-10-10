@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::PathBuf,
-    sync::{Mutex, MutexGuard, OnceLock},
+    sync::{mpsc::sync_channel, Mutex, MutexGuard, OnceLock},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -31,27 +31,73 @@ struct Settings {
     mode: String,
     opacity: f64,
     text: String,
-    show_time: bool,
     sound: bool,
     autostart: bool,
-    cups: u32,
-    cups_date: String,
+    /// People sip, they don't empty a cup: one drink = a few sips.
+    drink_sips: u32,
+    /// ml per sip. Studies: a natural sip is 9–20 ml (self-chosen cup sip ~19.8 ml).
+    sip_ml: u32,
+    /// Goal during work hours: the guideline is 1500–1700 ml a day, about 1000 of it at work.
+    goal_ml: u32,
+    /// Only run during work hours (pauses at lunch, after work and on weekends).
+    work_on: bool,
+    workdays_only: bool,
+    work_start: String,
+    work_end: String,
+    lunch_start: String,
+    lunch_end: String,
+    drank_ml: u32,
+    drank_date: String,
 }
 
 impl Default for Settings {
+    /// Office defaults: 09:00–18:00 with a 12:00–13:30 lunch is ~7.5 h at the desk. A reminder
+    /// every 30 min (also a good "stand up" rhythm) × 3 sips (~60 ml) ≈ 15 × 60 ≈ 900–1000 ml.
     fn default() -> Self {
         Self {
-            interval_min: 45,
+            interval_min: 30,
             theme: "ocean".into(),
             mode: "ambient".into(),
             opacity: 0.7,
             text: "该喝水啦".into(),
-            show_time: true,
             sound: true,
             autostart: false,
-            cups: 0,
-            cups_date: String::new(),
+            drink_sips: 3,
+            sip_ml: 20,
+            goal_ml: 1000,
+            work_on: true,
+            // Off by default: China's 调休 makes some Saturdays/Sundays workdays.
+            workdays_only: false,
+            work_start: "09:00".into(),
+            work_end: "18:00".into(),
+            lunch_start: "12:00".into(),
+            lunch_end: "13:30".into(),
+            drank_ml: 0,
+            drank_date: String::new(),
         }
+    }
+}
+
+/// "HH:MM" → minutes since midnight.
+fn minutes(s: &str) -> Option<u32> {
+    let (h, m) = s.split_once(':')?;
+    let (h, m) = (h.trim().parse::<u32>().ok()?, m.trim().parse::<u32>().ok()?);
+    (h < 24 && m < 60).then_some(h * 60 + m)
+}
+
+impl Settings {
+    /// Inside work hours, lunch cut out. Always true when the schedule is off.
+    fn working_now(&self) -> bool {
+        if !self.work_on {
+            return true;
+        }
+        let (weekday, now) = win::local_clock();
+        if self.workdays_only && (weekday == 0 || weekday == 6) {
+            return false;
+        }
+        let at = |v: &str| minutes(v).unwrap_or(0);
+        let lunch = at(&self.lunch_start) <= now && now < at(&self.lunch_end);
+        at(&self.work_start) <= now && now < at(&self.work_end) && !lunch
     }
 }
 
@@ -67,6 +113,8 @@ struct Core {
     bar: Option<win::Bar>,
     compact: bool,
     hidden: bool,
+    /// Outside work hours: no reminders, overlay hidden.
+    resting: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -81,8 +129,9 @@ struct Snapshot {
     seq: u64,
     side: &'static str,
     compact: bool,
-    /// The overlay is hidden (fullscreen app): WebView2 isn't told, so the page pauses itself.
+    /// The overlay is hidden (fullscreen app, off hours): WebView2 isn't told, so the page pauses itself.
     hidden: bool,
+    resting: bool,
 }
 
 impl Core {
@@ -101,6 +150,7 @@ impl Core {
             side: self.bar.map_or("bottom", |b| b.side),
             compact: self.compact,
             hidden: self.hidden,
+            resting: self.resting,
         }
     }
     fn bump(&mut self, action: &'static str) {
@@ -112,14 +162,14 @@ impl Core {
         self.paused_at = None;
         self.reminding = false;
     }
-    /// Reset the cup counter on a new day. Returns true when it changed.
+    /// Reset the daily ml counter on a new day. Returns true when it changed.
     fn roll_day(&mut self) -> bool {
         let today = win::today();
-        if self.s.cups_date == today {
+        if self.s.drank_date == today {
             return false;
         }
-        self.s.cups_date = today;
-        self.s.cups = 0;
+        self.s.drank_date = today;
+        self.s.drank_ml = 0;
         true
     }
     fn save(&self) {
@@ -152,7 +202,7 @@ fn act(app: &AppHandle, what: &str) {
         match what {
             "drink" => {
                 c.roll_day();
-                c.s.cups += 1;
+                c.s.drank_ml += c.s.drink_sips * c.s.sip_ml;
                 c.restart(now);
                 c.expand_until = now + ANIM_MS;
                 c.save();
@@ -169,6 +219,12 @@ fn act(app: &AppHandle, what: &str) {
                 c.restart(now);
                 c.bump("reset");
             }
+            // Double-click on the taskbar. Ignored right after a restart: the first click of a
+            // double-click on a showing reminder already counted as a drink.
+            "restart" if now - c.cycle_start > 2_000 && !c.resting => {
+                c.restart(now);
+                c.bump("restart");
+            }
             "pause" => {
                 match c.paused_at {
                     Some(p) => {
@@ -180,11 +236,12 @@ fn act(app: &AppHandle, what: &str) {
                 }
                 c.bump("pause");
             }
-            // Make the cycle due now; the ticker raises the reminder like a real one.
+            // Show a reminder now (also outside work hours, so it can be previewed any time).
             "test" => {
                 let iv = c.interval_ms();
                 c.restart(now - iv);
-                c.bump("reset");
+                c.reminding = true;
+                c.bump("remind");
             }
             _ => return,
         }
@@ -212,7 +269,8 @@ fn sync_overlay(app: &AppHandle) {
     let Some(bar) = c.bar else { return };
     let expanded = c.reminding || now_ms() < c.expand_until;
     let (rc, compact) = win::overlay_rect(&bar, expanded, hwnd);
-    let hidden = win::fullscreen_foreground(hwnd);
+    // Off hours the bar goes away (a previewed reminder and its animation still show).
+    let hidden = win::fullscreen_foreground(hwnd) || (c.resting && !expanded);
     win::place(hwnd, rc, !hidden, !c.reminding);
     if c.compact != compact || c.hidden != hidden {
         c.compact = compact;
@@ -252,7 +310,19 @@ fn ticker(app: AppHandle) {
                 c.save();
                 dirty = true;
             }
-            if !c.reminding && c.paused_at.is_none() && now - c.cycle_start >= c.interval_ms() {
+            let resting = !c.s.working_now();
+            if resting != c.resting {
+                // Lunch / evening: drop any reminder. Back at work: a fresh cycle, not an old one.
+                c.resting = resting;
+                if resting {
+                    c.reminding = false;
+                } else {
+                    c.restart(now);
+                }
+                c.bump(if resting { "rest" } else { "work" });
+                dirty = true;
+            }
+            if !c.resting && !c.reminding && c.paused_at.is_none() && now - c.cycle_start >= c.interval_ms() {
                 c.reminding = true;
                 c.bump("remind");
                 dirty = true;
@@ -274,15 +344,36 @@ fn ticker(app: AppHandle) {
     }
 }
 
+/// Double-click on empty taskbar space (where the bar is drawn) restarts the timer.
+/// Clicks on apps, Start, tray icons or the clock are left alone (taskbar buttons via UI Automation).
+fn double_click_restarts(app: AppHandle) {
+    let (tx, rx) = sync_channel::<(i32, i32)>(4);
+    win::watch_double_clicks(tx);
+    let uia = win::Uia::new();
+    for (x, y) in rx {
+        let on_bar = {
+            let c = core(&app);
+            let shown = !c.hidden;
+            shown && c.bar.is_some_and(|b| b.rc.left <= x && x < b.rc.right && b.rc.top <= y && y < b.rc.bottom)
+        };
+        if on_bar && uia.as_ref().is_some_and(|u| !u.on_taskbar_button(x, y)) {
+            act(&app, "restart");
+        }
+    }
+}
+
 fn tooltip(c: &Core, now: i64) -> String {
     if c.reminding {
         return format!("喝水进度条 · {}！", c.s.text);
+    }
+    if c.resting {
+        return format!("喝水进度条 · 休息时间 · 今日 {} ml", c.s.drank_ml);
     }
     if c.paused_at.is_some() {
         return "喝水进度条 · 已暂停".into();
     }
     let left = (c.interval_ms() - (now - c.cycle_start)).max(0);
-    format!("喝水进度条 · 还有 {} 分钟 · 今日 {} 杯", (left + 59_999) / 60_000, c.s.cups)
+    format!("喝水进度条 · 还有 {} 分钟 · 今日 {} / {} ml", (left + 59_999) / 60_000, c.s.drank_ml, c.s.goal_ml)
 }
 
 struct PauseItem(MenuItem<Wry>);
@@ -317,7 +408,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         &[
             &MenuItem::with_id(app, "open", "打开设置", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, "drink", "我喝完了，重新计时", true, None::<&str>)?,
+            &MenuItem::with_id(app, "drink", "我喝了几口，重新计时", true, None::<&str>)?,
+            &MenuItem::with_id(app, "restart", "只重新计时", true, None::<&str>)?,
             &MenuItem::with_id(app, "snooze", "稍后提醒（5 分钟）", true, None::<&str>)?,
             &pause,
             &MenuItem::with_id(app, "test", "预览提醒效果", true, None::<&str>)?,
@@ -355,18 +447,28 @@ fn save_settings(app: AppHandle, settings: Settings) -> Snapshot {
     let snap = {
         let mut c = core(&app);
         let autostart_changed = c.s.autostart != settings.autostart;
-        let (cups, cups_date) = (c.s.cups, c.s.cups_date.clone());
+        let (drank_ml, drank_date) = (c.s.drank_ml, c.s.drank_date.clone());
+        let d = Settings::default();
+        // A bad "HH:MM" from the page falls back to the default time.
+        let time = |v: String, fallback: String| if minutes(&v).is_some() { v } else { fallback };
         // Values come from a webview: clamp them, the counters stay backend-owned.
         c.s = Settings {
             interval_min: settings.interval_min.clamp(1, 600),
             opacity: settings.opacity.clamp(0.15, 1.0),
             text: settings.text.trim().chars().take(16).collect(),
-            cups,
-            cups_date,
+            drink_sips: settings.drink_sips.clamp(1, 20),
+            sip_ml: settings.sip_ml.clamp(5, 60),
+            goal_ml: settings.goal_ml.clamp(100, 5000),
+            work_start: time(settings.work_start, d.work_start),
+            work_end: time(settings.work_end, d.work_end),
+            lunch_start: time(settings.lunch_start, d.lunch_start),
+            lunch_end: time(settings.lunch_end, d.lunch_end),
+            drank_ml,
+            drank_date,
             ..settings
         };
         if c.s.text.is_empty() {
-            c.s.text = Settings::default().text;
+            c.s.text = d.text;
         }
         if autostart_changed {
             win::set_autostart(c.s.autostart);
@@ -392,10 +494,12 @@ fn action(app: AppHandle, what: String) -> Snapshot {
 
 fn main() {
     tauri::Builder::default()
-        // A second launch opens the settings; `WaterBar.exe --preview` shows the reminder right away.
+        // A second launch opens the settings; `--preview` shows the reminder, `--restart` restarts the timer.
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {
             if args.iter().any(|a| a == "--preview") {
                 act(app, "test");
+            } else if args.iter().any(|a| a == "--restart") {
+                act(app, "restart");
             } else {
                 open_settings(app);
             }
@@ -409,6 +513,7 @@ fn main() {
             if s.autostart {
                 win::set_autostart(true); // refresh the path in case the exe moved
             }
+            let resting = !s.working_now();
             let mut c = Core {
                 s,
                 path,
@@ -421,6 +526,7 @@ fn main() {
                 bar: win::taskbar(),
                 compact: false,
                 hidden: false,
+                resting,
             };
             c.roll_day();
             app.manage(Mutex::new(c));
@@ -431,6 +537,8 @@ fn main() {
             win::on_foreground_change(on_foreground);
             let h = handle.clone();
             thread::spawn(move || ticker(h));
+            let h = handle.clone();
+            thread::spawn(move || double_click_restarts(h));
 
             if first_run || !std::env::args().any(|a| a == "--autostart") {
                 open_settings(&handle);

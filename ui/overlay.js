@@ -1,4 +1,4 @@
-import { LiquidBar, fmtClock, clamp } from './liquid.js';
+import { LiquidBar, clamp } from './liquid.js';
 
 const { invoke } = window.__TAURI__.core; // backend commands
 const { listen } = window.__TAURI__.event; // backend events
@@ -71,8 +71,10 @@ function apply(next) {
     bar.startReminder();
     if (fresh && next.action === 'remind' && s.sound) play([[0, 520, 0.3], [0.17, 690, 0.26], [0.36, 600, 0.22]]);
   } else if (!next.reminding && fresh && next.action === 'drink') {
-    bar.drink(`+1 杯 · 今天第 ${s.cups} 杯`);
+    bar.drink(`+${s.drinkSips * s.sipMl} ml · 今天 ${s.drankMl} ml`);
     if (s.sound) play([[0, 880, 0.12], [0.1, 1320, 0.1]]);
+  } else if (!next.reminding && fresh && next.action === 'restart') {
+    bar.snooze('已重新计时'); // water recedes to the start, a short message rises
   } else if (!next.reminding && bar.remind) {
     const minutes = Math.min(5, next.intervalMs / 120000); // the backend snoozes min(5 min, half the interval)
     bar.snooze(next.action === 'snooze' ? `好的，${+minutes.toFixed(1)} 分钟后再提醒` : '');
@@ -100,8 +102,6 @@ function loop(now) {
   const dt = (now - last) / 1000; // seconds since last draw
   last = now;
   bar.target = progressOf(snap);
-  const s = snap.settings; // user settings
-  bar.label = snap.pausedAt != null ? '⏸ 已暂停' : s.showTime ? `💧 ${fmtClock(snap.intervalMs - (Date.now() - snap.cycleStart))}` : '';
   bar.frame(dt);
 }
 

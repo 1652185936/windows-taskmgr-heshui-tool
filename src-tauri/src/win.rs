@@ -1,12 +1,17 @@
 //! Thin Win32 helpers: taskbar geometry, z-order, fullscreen detection, autostart.
 
 use std::mem::size_of;
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering::Relaxed};
+use std::sync::{mpsc::SyncSender, OnceLock};
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{COLORREF, HWND, RECT};
+use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromRect, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY};
+use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Registry::{RegDeleteKeyValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ};
 use windows::Win32::System::SystemInformation::GetLocalTime;
-use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
+use windows::Win32::UI::Accessibility::*;
+use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABE_LEFT, ABE_RIGHT, ABE_TOP, ABM_GETSTATE, ABM_GETTASKBARPOS, ABS_AUTOHIDE, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -172,8 +177,87 @@ pub fn set_autostart(on: bool) {
     }
 }
 
-/// Local calendar day, used to reset the cup counter at midnight.
+/// Local calendar day, used to reset the daily counter at midnight.
 pub fn today() -> String {
     let t = unsafe { GetLocalTime() };
     format!("{:04}-{:02}-{:02}", t.wYear, t.wMonth, t.wDay)
+}
+
+/// Local (weekday 0 = Sunday, minutes since midnight).
+pub fn local_clock() -> (u16, u32) {
+    let t = unsafe { GetLocalTime() };
+    (t.wDayOfWeek, t.wHour as u32 * 60 + t.wMinute as u32)
+}
+
+static DBL: OnceLock<SyncSender<(i32, i32)>> = OnceLock::new();
+static LAST_T: AtomicU32 = AtomicU32::new(0);
+static LAST_X: AtomicI32 = AtomicI32::new(i32::MIN);
+static LAST_Y: AtomicI32 = AtomicI32::new(i32::MIN);
+
+/// Reports every double-click anywhere on screen (screen px). The overlay itself must stay
+/// click-through so the taskbar keeps working, so a low-level hook only *observes* clicks.
+pub fn watch_double_clicks(tx: SyncSender<(i32, i32)>) {
+    let _ = DBL.set(tx);
+    std::thread::spawn(|| unsafe {
+        let module = GetModuleHandleW(PCWSTR::null()).ok().map(|m| HINSTANCE(m.0));
+        let Ok(_hook) = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), module, 0) else { return };
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
+    });
+}
+
+unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    // Must return fast: Windows drops slow low-level hooks. Real work happens on another thread.
+    if code >= 0 && wparam.0 as u32 == WM_LBUTTONDOWN {
+        let m = &*(lparam.0 as *const MSLLHOOKSTRUCT);
+        let (dx, dy) = (GetSystemMetrics(SM_CXDOUBLECLK) / 2, GetSystemMetrics(SM_CYDOUBLECLK) / 2);
+        let near = (m.pt.x - LAST_X.load(Relaxed)).abs() <= dx && (m.pt.y - LAST_Y.load(Relaxed)).abs() <= dy;
+        if near && m.time.wrapping_sub(LAST_T.load(Relaxed)) <= GetDoubleClickTime() {
+            if let Some(tx) = DBL.get() {
+                let _ = tx.try_send((m.pt.x, m.pt.y));
+            }
+            LAST_X.store(i32::MIN, Relaxed); // a triple click is not two double clicks
+        } else {
+            LAST_X.store(m.pt.x, Relaxed);
+            LAST_Y.store(m.pt.y, Relaxed);
+        }
+        LAST_T.store(m.time, Relaxed);
+    }
+    CallNextHookEx(None, code, wparam, lparam)
+}
+
+/// UI Automation, to tell empty taskbar space from its buttons (apps, Start, tray, clock...).
+pub struct Uia(IUIAutomation);
+
+impl Uia {
+    pub fn new() -> Option<Self> {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok().map(Uia)
+        }
+    }
+
+    /// True when the point is on one of the taskbar's buttons (Start, search, apps, tray icons,
+    /// clock, show desktop). Asks the taskbar's own UI tree: hit-testing from the point would
+    /// only find our overlay, which UI Automation sees even though it is click-through.
+    /// Any failure counts as "on a button", so a broken lookup never restarts the timer.
+    pub fn on_taskbar_button(&self, x: i32, y: i32) -> bool {
+        unsafe {
+            let Ok(tray) = FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()) else { return true };
+            let Ok(root) = self.0.ElementFromHandle(tray) else { return true };
+            let Ok(all) = self.0.CreateTrueCondition().and_then(|c| root.FindAll(TreeScope_Descendants, &c)) else { return true };
+            for i in 0..all.Length().unwrap_or(0) {
+                let Ok(e) = all.GetElement(i) else { continue };
+                if e.CurrentControlType() != Ok(UIA_ButtonControlTypeId) {
+                    continue;
+                }
+                if let Ok(r) = e.CurrentBoundingRectangle() {
+                    if r.left <= x && x < r.right && r.top <= y && y < r.bottom {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+    }
 }
