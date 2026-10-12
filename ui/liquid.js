@@ -24,9 +24,11 @@ const FONT = '"Microsoft YaHei UI", "Segoe UI", sans-serif'; // UI font stack
 const HINT = '点一下记录 · 右键稍后'; // interaction hint next to the reminder
 /** Two surface layers: wavelength (px at a 48 px bar), scroll speed (px/s), vertical offset (px). */
 const LAYERS = [
-  { lambda: 170, speed: 34, dy: 0 },
-  { lambda: 245, speed: -23, dy: -1.6 },
+  { lambda: 170, speed: 22, dy: 0 },
+  { lambda: 245, speed: -14, dy: -1.6 },
 ];
+const SHIMMER_SPEED = 55; // px/s of the light band sweeping through the water
+const PULSE_SPEED = 70; // px/s of the energy pulses running along the light line
 const Q = 0.5; // the two water layers render at half resolution (soft anyway; ~4× less work per frame)
 const rgbCache = new Map(); // hex colour → [r, g, b]
 
@@ -195,6 +197,10 @@ export class LiquidBar {
     this.rings = []; // ripple rings around the reminder drop
     this.floats = []; // floating messages
     this.acc = { bubble: 0, spark: 0, ring: 0 }; // fractional spawn accumulators
+    // Effects advance by a phase at a steady px/s. A fixed period instead made them race across a
+    // short bar (≈10%) and flash it as a whole — it looked like flicker.
+    this.sweepPhase = 0; // shimmer band position 0..1
+    this.pulsePhase = 0; // light-line pulses position 0..1
     this.kit = null; // per theme/size sprites, rebuilt by prepare()
     this.badgeKit = null; // reminder badge sprites, rebuilt when the text changes
     new ResizeObserver(() => this.resize()).observe(canvas);
@@ -356,6 +362,8 @@ export class LiquidBar {
       this.p += (this.target - this.p) * (1 - Math.exp(-dt * 3));
     }
 
+    this.sweepPhase = (this.sweepPhase + (dt * SHIMMER_SPEED * g.unit) / (Math.max(g.end, 200) + 260)) % 1;
+    this.pulsePhase = (this.pulsePhase + (dt * PULSE_SPEED * g.unit) / (Math.max(g.lineX, 1) + 80)) % 1;
     const wet = g.level > 0.01 && g.front > 2; // there is liquid to fill
     this.acc.bubble += wet ? dt * (g.p * (g.ambient ? 3 : 7) + g.re * 16 + (g.draining ? 46 : 0)) : 0;
     while (this.acc.bubble >= 1 && this.bubbles.length < 90) {
@@ -377,14 +385,14 @@ export class LiquidBar {
     });
 
     if (g.line && g.re < 0.5 && g.lineX > 2) {
-      this.acc.spark += dt * 22;
+      this.acc.spark += dt * 22 * clamp(g.lineX / 300, 0.3, 1); // fewer comet sparks on a short line
       const dir = g.atBottom ? -1 : 1; // sparks drift into the taskbar
       while (this.acc.spark >= 1) {
         this.acc.spark -= 1;
         this.sparks.push({ line: true, x: g.lineX, y: g.y0 + g.T / 2, vx: -(18 + Math.random() * 60), vy: dir * Math.random() * 16, age: 0, life: 0.45 + Math.random() * 0.5, s: (0.6 + Math.random() * 0.9) * Math.max(1, g.T / 3) });
       }
     } else if (!g.line && !g.ambient && !g.full && wet && g.p > 0.01) {
-      this.acc.spark += dt * 1.6;
+      this.acc.spark += dt * 1.6 * clamp(g.end / 400, 0.15, 1); // fewer twinkles on a short bar
       while (this.acc.spark >= 1) {
         this.acc.spark -= 1;
         this.sparks.push({ line: false, x: g.end - 4 - Math.random() * Math.min(70, g.end), age: 0, life: 0.8 + Math.random() * 0.7, s: (1.6 + Math.random() * 1.8) * g.unit });
@@ -698,13 +706,14 @@ export class LiquidBar {
     ctx.globalCompositeOperation = 'lighter';
     const deep = Math.min(S, g.top + g.amp); // lowest trough: below it everything is water
     const bodyEnd = g.full ? L : Math.max(0, end - R - fp / dpr); // where the straight body ends
-    const sweep = ((t % 4.6) / 4.6) * (Math.max(end, 200) + 260) - 130; // shimmer band centre
+    const sweep = this.sweepPhase * (Math.max(end, 200) + 260) - 130; // shimmer band centre
     const x0 = clamp(sweep - 50, 0, bodyEnd); // shimmer band left
     const x1 = clamp(sweep + 50, 0, bodyEnd); // shimmer band right
-    if (x1 > x0) {
+    const room = clamp((bodyEnd - 40) / 260, 0, 1); // a short body gets no (or a faint) shimmer
+    if (x1 > x0 && room > 0) {
       const shine = ctx.createLinearGradient(sweep - 50, 0, sweep + 50, 0); // shimmer band
       shine.addColorStop(0, 'rgba(255,255,255,0)');
-      shine.addColorStop(0.5, rgba('#FFFFFF', (amb ? 0.06 : 0.14) * k));
+      shine.addColorStop(0.5, rgba('#FFFFFF', (amb ? 0.06 : 0.14) * k * room));
       shine.addColorStop(1, 'rgba(255,255,255,0)');
       ctx.fillStyle = shine;
       ctx.fillRect(x0, deep, x1 - x0, S - deep);
@@ -773,7 +782,7 @@ export class LiquidBar {
    */
   drawLine(g, k) {
     if (k <= 0.005) return;
-    const { ctx, t } = this; // context, clock
+    const { ctx } = this; // context
     const { L, S, T, y0, theme } = g; // geometry shortcuts
     const x = g.lineX; // head position
     ctx.fillStyle = rgba('#FFFFFF', 0.1 * k);
@@ -797,11 +806,13 @@ export class LiquidBar {
     ctx.fillRect(0, y0, x, T);
 
     ctx.globalCompositeOperation = 'lighter';
-    for (let i = 0; i < 3; i++) {
-      const pos = ((t * 150 + (i * (x + 80)) / 3) % (x + 80)) - 40; // energy pulse travelling along the line
+    const pulses = clamp(Math.round(x / 350), 1, 3); // a short line carries one calm pulse, a long one up to three
+    const strength = clamp(x / 240, 0.3, 1); // and it is dimmer while the line is short
+    for (let i = 0; i < pulses; i++) {
+      const pos = ((this.pulsePhase + i / pulses) % 1) * (x + 80) - 40; // energy pulse travelling along the line
       const pulse = ctx.createLinearGradient(pos - 40, 0, pos + 40, 0); // pulse shape
       pulse.addColorStop(0, 'rgba(255,255,255,0)');
-      pulse.addColorStop(0.5, rgba('#FFFFFF', 0.55 * k));
+      pulse.addColorStop(0.5, rgba('#FFFFFF', 0.55 * k * strength));
       pulse.addColorStop(1, 'rgba(255,255,255,0)');
       ctx.fillStyle = pulse;
       ctx.fillRect(Math.max(0, pos - 40), y0, Math.min(80, x - Math.max(0, pos - 40)), T);
