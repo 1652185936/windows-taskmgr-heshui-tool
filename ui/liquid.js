@@ -323,7 +323,7 @@ export class LiquidBar {
     const amp = unit * (1.4 + 2 * re + surge + 3 * Math.sin(dk * Math.PI)); // wave height
     const full = p >= 0.999; // liquid reaches the far end
     const end = full ? L + 4 : p * L + Math.sin(this.t * 2.2) * 0.8; // liquid front x
-    const atBottom = o.side === 'top' || o.side === 'left'; // light line sits on the far edge
+    const atBottom = o.side === 'bottom' || o.side === 'right'; // light line hugs the screen edge (bottom of a normal taskbar)
     const T = o.compact ? S : Math.max(2, Math.round(S * 0.075)); // light line thickness
     const lineP = draining ? lerp(this.pHold, this.target, easeInOut(dk)) : this.p; // light line progress
     return {

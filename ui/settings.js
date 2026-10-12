@@ -100,7 +100,7 @@ function renderControls() {
   if (document.activeElement !== $('ivInput')) $('ivInput').value = settings.intervalMin;
   document.querySelectorAll('#chips .chip').forEach((c) => c.classList.toggle('on', +c.dataset.min === settings.intervalMin));
   document.querySelectorAll('#amounts .chip').forEach((c) => c.classList.toggle('on', +c.dataset.sips === settings.drinkSips));
-  $('amtDesc').textContent = `${settings.drinkSips} 口 = ${settings.drinkSips * settings.sipMl} ml，提醒时点一下就记一次`;
+  $('amtDesc').textContent = `${settings.drinkSips} 口 = ${settings.drinkSips * settings.sipMl} ml，点提醒或双击任务栏都记一次`;
   if (document.activeElement !== $('sipInput')) $('sipInput').value = settings.sipMl;
   $('themeName').textContent = (THEMES[settings.theme] || THEMES.ocean).name;
   $('goalRange').value = settings.goalMl;

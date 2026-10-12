@@ -200,7 +200,9 @@ fn act(app: &AppHandle, what: &str) {
         let mut c = core(app);
         let now = now_ms();
         match what {
-            "drink" => {
+            // "tap_drink" = double-click on the taskbar. Ignored right after a restart: on a showing
+            // reminder the first click of that double-click already counted the drink.
+            "drink" | "tap_drink" if what == "drink" || now - c.cycle_start > 2_000 => {
                 c.roll_day();
                 c.s.drank_ml += c.s.drink_sips * c.s.sip_ml;
                 c.restart(now);
@@ -219,8 +221,7 @@ fn act(app: &AppHandle, what: &str) {
                 c.restart(now);
                 c.bump("reset");
             }
-            // Double-click on the taskbar. Ignored right after a restart: the first click of a
-            // double-click on a showing reminder already counted as a drink.
+            // Tray "只重新计时" / `--restart`: a new cycle without recording a drink.
             "restart" if now - c.cycle_start > 2_000 && !c.resting => {
                 c.restart(now);
                 c.bump("restart");
@@ -344,9 +345,9 @@ fn ticker(app: AppHandle) {
     }
 }
 
-/// Double-click on empty taskbar space (where the bar is drawn) restarts the timer.
+/// Double-click on empty taskbar space (where the bar is drawn) = "I drank": records a drink.
 /// Clicks on apps, Start, tray icons or the clock are left alone (taskbar buttons via UI Automation).
-fn double_click_restarts(app: AppHandle) {
+fn double_click_drinks(app: AppHandle) {
     let (tx, rx) = sync_channel::<(i32, i32)>(4);
     win::watch_double_clicks(tx);
     let uia = win::Uia::new();
@@ -357,7 +358,7 @@ fn double_click_restarts(app: AppHandle) {
             shown && c.bar.is_some_and(|b| b.rc.left <= x && x < b.rc.right && b.rc.top <= y && y < b.rc.bottom)
         };
         if on_bar && uia.as_ref().is_some_and(|u| !u.on_taskbar_button(x, y)) {
-            act(&app, "restart");
+            act(&app, "tap_drink");
         }
     }
 }
@@ -538,7 +539,7 @@ fn main() {
             let h = handle.clone();
             thread::spawn(move || ticker(h));
             let h = handle.clone();
-            thread::spawn(move || double_click_restarts(h));
+            thread::spawn(move || double_click_drinks(h));
 
             if first_run || !std::env::args().any(|a| a == "--autostart") {
                 open_settings(&handle);
